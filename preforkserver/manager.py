@@ -84,6 +84,7 @@ class Manager(object):
                                        and it is highly recommended that
                                        you turn this on if available
         """
+        self.log('init')
         if not child_args:
             child_args = []
         if not child_kwargs:
@@ -116,6 +117,7 @@ class Manager(object):
                 (protocol, self.validProtocols))
         self.listen = int(listen)
         self.reuse_port = reuse_port and hasattr(socket , 'SO_REUSEPORT')
+        self.log('reuse port: ' + str(self.reuse_port))
         self.server_socket = None
         self._stop = threading.Event()
         self._children = {}
@@ -147,11 +149,11 @@ class Manager(object):
         manager = weakref.proxy(self) if self.reuse_port else None
         pid = os.fork()
         if not pid:
-            ch = self._ChildClass(self.max_requests , child_pipe , 
+            self.ch = self._ChildClass(self.max_requests , child_pipe ,
                 self.protocol , self.server_socket , manager ,
                 self._child_args , self._child_kwargs)
             parent_pipe.close()
-            ch.run()
+            self.ch.run()
         else:
             self._children[parent_pipe.fileno()] = ManagerChild(pid,
                                                                 parent_pipe)
@@ -181,6 +183,7 @@ class Manager(object):
             t.start()
         else:
             os.waitpid(child.pid, 0)
+            self.log('end waiting pid ' + str(child.pid))
 
     def _handle_child_event(self, child):
         event, msg = child.conn.recv()
@@ -291,11 +294,16 @@ class Manager(object):
     def _shutdown_server(self):
         self.log('Starting server shutdown')
         children = self._children.values()
-        # First loop through and tell the children to close
+
         for child in children:
+            # Send for immediately disconnect
+            self.log('SIGTERM for pid: ' + str(child.pid))
+            os.kill(child.pid, signal.SIGTERM)
+
+        for child in children:
+            # Send for smooth stop
             self._kill_child(child, False)
-        if self.server_socket:
-            self.server_socket.close()
+
         self.log('Server shutdown completed')
 
     def run(self):
@@ -315,6 +323,17 @@ class Manager(object):
         Stop the server
         """
         self._stop.set()
+
+    def disconnect(self):
+        if hasattr(self, 'ch'):
+            # forked process
+            self.log('Disconnect child')
+            self.ch.disconnect()
+            self.ch.closed = True
+        else:
+            # main process
+            self.log('Close listen socket')
+            self.server_socket.close()
 
     # All of the following methods can be overridden in a subclass
     def pre_bind(self):
@@ -382,18 +401,22 @@ class Manager(object):
         """
         Handle a SIGHUP.  By default, this does nothing
         """
-        return
+        self.log('GET SIGHUP signal')
 
     def int_handler(self, frame, num):
         """
         Handle a SIGINT.  By default, this will stop the server
         """
+        self.log('GET SIGINT signal')
+        self.disconnect()
         self._stop.set()
 
     def term_handler(self, frame, num):
         """
         Handle a SIGTERM.  By default, this will stop the server
         """
+        self.log('GET SIGTERM signal')
+        self.disconnect()
         self._stop.set()
 
     # Utilities that can be defined

@@ -20,7 +20,7 @@
 
 import preforkserver.events as pfe
 from preforkserver.poller import get_poller
-from time import sleep
+import time
 import socket
 import select
 import os
@@ -54,7 +54,9 @@ class BaseChild(object):
             self.pre_bind()
             server_socket = self._get_server_socket(manager)
             self.post_bind()
+        self.log('Created child')
         self._server_socket = server_socket
+        self.socket_already_close = False
         self._max_requests = max_requests
         self._child_conn = child_conn
         self._poll = get_poller(select.POLLIN | select.POLLPRI)
@@ -77,7 +79,7 @@ class BaseChild(object):
         """
         Returns the bound server address as (ip , port) tuple
         """
-        return self.server_socket.getsockname()
+        return self._server_socket.getsockname()
 
     def _get_server_socket(self , manager):
         """
@@ -100,16 +102,28 @@ class BaseChild(object):
             self.conn.close()
 
     def _waiting(self):
+        if self.socket_already_close:
+            self.closed = True
+            return
         self._child_conn.send([pfe.WAITING, self.requests_handled])
 
     def _busy(self):
+        if self.socket_already_close:
+            self.closed = True
+            return
         self._child_conn.send([pfe.BUSY, self.requests_handled])
 
     def _error(self, msg=None):
         self.error = msg
+        if self.socket_already_close:
+            self.closed = True
+            return
         self._child_conn.send([pfe.EXITING_ERROR, str(msg)])
 
     def _handled_max_requests(self):
+        if self.socket_already_close:
+            self.closed = True
+            return
         self._child_conn.send([pfe.EXITING_MAX, ''])
 
     def _handle_parent_event(self):
@@ -142,7 +156,7 @@ class BaseChild(object):
             try:
                 self.conn, self.address = self._server_socket.recvfrom(8192)
             except socket.error:
-                # There is a condition where more than 1 process can end up 
+                # There is a condition where more than 1 process can end up
                 # here on a single connection.  The second one (this one, 
                 # if we get here) will timeout
                 return
@@ -185,16 +199,21 @@ class BaseChild(object):
                 self._shutdown()
 
     def _shutdown(self, status=0):
-        self._poll.unregister(self._child_conn)
-        self._poll.unregister(self._server_socket)
-        self._child_conn.close()
-        self._server_socket.close()
+        self.disconnect()
         self.shutdown()
-        sleep(0.1)
+        time.sleep(0.1)
+        self.log('Child exit')
         os._exit(status)
 
     def run(self):
         self._loop()
+
+    def disconnect(self):
+        if not self.socket_already_close:
+            self.log('Close socket to listen')
+            self._poll.unregister(self._server_socket)
+            self._server_socket.close()
+            self.socket_already_close = True
 
     def resp_to(self , msg):
         """
@@ -276,3 +295,6 @@ class BaseChild(object):
         You can do any additional child cleanup in this hook.
         """
         return
+
+    def log(self, msg):
+        pass

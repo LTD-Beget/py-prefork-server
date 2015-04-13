@@ -297,4 +297,5 @@ class BaseChild(object):
         return
 
     def log(self, msg):
-        pass
+        # print 'Child[%s]: %s' % (os.getpid(), msg)
+        return

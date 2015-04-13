@@ -333,7 +333,8 @@ class Manager(object):
         else:
             # main process
             self.log('Close listen socket')
-            self.server_socket.close()
+            if self.server_socket:
+                self.server_socket.close()
 
     # All of the following methods can be overridden in a subclass
     def pre_bind(self):
@@ -425,4 +426,5 @@ class Manager(object):
         You can define a logging method and log internal messages and messages
         you generate.  By default, this does nothing.
         """
+        # print 'Manager[%s]: %s' % (os.getpid(), msg)
         return
